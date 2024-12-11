@@ -137,13 +137,12 @@ class RobotBaseNode(Node):
         self.robot_low_cmd = {}
         self.robot_sport_state = {}
         self.robot_lidar = {}
-
         self.joy_state = Joy()
 
         if self.conn_mode == 'single':
             self.create_subscription(
                 Twist,
-                'cmd_vel_out',
+                'cmd_vel',
                 lambda msg: self.cmd_vel_cb(msg, "0"),
                 qos_profile)
         else:
@@ -212,7 +211,7 @@ class RobotBaseNode(Node):
         odom_trans = TransformStamped()
         odom_trans.header.stamp = self.get_clock().now().to_msg()
         odom_trans.header.frame_id = 'odom'
-        odom_trans.child_frame_id = f"robot0/base_link"
+        odom_trans.child_frame_id = f"base_link"
         odom_trans.transform.translation.x = msg.pose.position.x
         odom_trans.transform.translation.y = msg.pose.position.y
         odom_trans.transform.translation.z = msg.pose.position.z + 0.07
@@ -226,10 +225,10 @@ class RobotBaseNode(Node):
         joint_state = JointState()
         joint_state.header.stamp = self.get_clock().now().to_msg()
         joint_state.name = [
-            f'robot0/FL_hip_joint', f'robot0/FL_thigh_joint', f'robot0/FL_calf_joint',
-            f'robot0/FR_hip_joint', f'robot0/FR_thigh_joint', f'robot0/FR_calf_joint',
-            f'robot0/RL_hip_joint', f'robot0/RL_thigh_joint', f'robot0/RL_calf_joint',
-            f'robot0/RR_hip_joint', f'robot0/RR_thigh_joint', f'robot0/RR_calf_joint',
+            f'FL_hip_joint', f'FL_thigh_joint', f'FL_calf_joint',
+            f'FR_hip_joint', f'FR_thigh_joint', f'FR_calf_joint',
+            f'RL_hip_joint', f'RL_thigh_joint', f'RL_calf_joint',
+            f'RR_hip_joint', f'RR_thigh_joint', f'RR_calf_joint',
         ]
         joint_state.position = [
             msg.motor_state[3].q, msg.motor_state[4].q, msg.motor_state[5].q,
@@ -240,7 +239,7 @@ class RobotBaseNode(Node):
         self.joint_pub[0].publish(joint_state)
 
     def publish_lidar_cyclonedds(self, msg):
-        msg.header = Header(frame_id="robot0/radar")
+        msg.header = Header(frame_id="odom")
         msg.header.stamp = self.get_clock().now().to_msg()
         self.go2_lidar_pub[0].publish(msg)
 
@@ -302,7 +301,7 @@ class RobotBaseNode(Node):
             asyncio.sleep(0)
 
     def on_data_channel_message(self, _, msg, robot_num):
-
+        # self.get_logger().info(f"Received message: {msg.get('topic')}")
         if msg.get('topic') == RTC_TOPIC["ULIDAR_ARRAY"]:
             self.robot_lidar[robot_num] = msg
 
