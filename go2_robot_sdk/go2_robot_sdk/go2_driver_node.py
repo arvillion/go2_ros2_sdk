@@ -70,6 +70,7 @@ class RobotBaseNode(Node):
             'ROBOT_TOKEN', os.getenv('GO2_TOKEN', '')))
         self.declare_parameter('conn_type', os.getenv(
             'CONN_TYPE', os.getenv('CONN_TYPE', '')))
+        self.declare_parameter('use_livox_localization', os.getenv('LIVO_LOC'))
 
         self.robot_ip = self.get_parameter(
             'robot_ip').get_parameter_value().string_value
@@ -78,6 +79,8 @@ class RobotBaseNode(Node):
         self.robot_ip_lst = self.robot_ip.replace(" ", "").split(",")
         self.conn_type = self.get_parameter(
             'conn_type').get_parameter_value().string_value
+        self.use_livox_localization = self.get_parameter(
+            'use_livox_localization').get_parameter_value().bool_value
 
         self.conn_mode = "single" if len(self.robot_ip_lst) == 1 else "multi"
 
@@ -161,17 +164,25 @@ class RobotBaseNode(Node):
 
         # Support for CycloneDDS (EDU version via ethernet)
         if self.conn_type == 'cyclonedds':
+            self.get_logger().info("Using CycloneDDS")
             self.create_subscription(
                 LowState,
                 'lowstate',
                 self.publish_joint_state_cyclonedds,
                 qos_profile)
-
-            self.create_subscription(
-                PoseStamped,
-                '/utlidar/robot_pose',
-                self.publish_body_poss_cyclonedds,
-                qos_profile)
+            
+            if not self.use_livox_localization:
+                self.create_subscription(
+                    PoseStamped,
+                    '/utlidar/robot_pose',
+                    self.publish_body_poss_cyclonedds,
+                    qos_profile)
+            else:
+                self.create_subscription(
+                    Odometry,
+                    '/localization',
+                    self.publish_body_poss_cyclonedds_livox,
+                    qos_profile)
 
             self.create_subscription(
                 PointCloud2,
@@ -221,6 +232,20 @@ class RobotBaseNode(Node):
         odom_trans.transform.rotation.w = msg.pose.orientation.w
         self.broadcaster.sendTransform(odom_trans)
 
+    def publish_body_poss_cyclonedds_livox(self, msg):
+        odom_trans = TransformStamped()
+        odom_trans.header.stamp = self.get_clock().now().to_msg()
+        odom_trans.header.frame_id = 'camera_init'
+        odom_trans.child_frame_id = f"body"
+        odom_trans.transform.translation.x = msg.pose.position.x
+        odom_trans.transform.translation.y = msg.pose.position.y
+        odom_trans.transform.translation.z = msg.pose.position.z + 0.07
+        odom_trans.transform.rotation.x = msg.pose.orientation.x
+        odom_trans.transform.rotation.y = msg.pose.orientation.y
+        odom_trans.transform.rotation.z = msg.pose.orientation.z
+        odom_trans.transform.rotation.w = msg.pose.orientation.w
+        self.broadcaster.sendTransform(odom_trans)
+
     def publish_joint_state_cyclonedds(self, msg):
         joint_state = JointState()
         joint_state.header.stamp = self.get_clock().now().to_msg()
@@ -239,7 +264,7 @@ class RobotBaseNode(Node):
         self.joint_pub[0].publish(joint_state)
 
     def publish_lidar_cyclonedds(self, msg):
-        msg.header = Header(frame_id="odom")
+        msg.header = Header(frame_id="odom") if not self.use_livox_localization else Header(frame_id="camera_init")
         msg.header.stamp = self.get_clock().now().to_msg()
         self.go2_lidar_pub[0].publish(msg)
 

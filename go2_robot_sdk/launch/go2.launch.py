@@ -53,10 +53,16 @@ def generate_launch_description():
     launch_args.append(DeclareLaunchArgument('teleop', default_value='True', description='Launch Teleop'))
     launch_args.append(DeclareLaunchArgument('map', default_value='', description='Map file (.yaml) to load'))
     
+    conn_type = os.getenv('CONN_TYPE', 'webrtc')
+    use_livo_localization = os.getenv('LIVO_LOC', None)
+    
+    if use_livo_localization and conn_type != 'cyclonedds':
+            raise RuntimeError("If 'LIVO_LOC' is set to false, you must use CycloneDDS as connection type.")
+    
     def validate_params(context, *args, **kwargs):
         param1 = context.launch_configurations['slam']
         param2 = context.launch_configurations.get('map', None)
-
+    
         if (param1 in ["False", "false"]) and not param2:
             raise RuntimeError("If 'slam' is set to false, you must specify a map file to load.")
 
@@ -75,7 +81,6 @@ def generate_launch_description():
     map_name = os.getenv('MAP_NAME', '3d_map')
     save_map = os.getenv('MAP_SAVE', 'true')
 
-    conn_type = os.getenv('CONN_TYPE', 'webrtc')
 
     if conn_mode == 'single':
         rviz_config = "single_robot_conf.rviz"
@@ -124,7 +129,7 @@ def generate_launch_description():
     nav2_config = os.path.join(
         get_package_share_directory('go2_robot_sdk'),
         'config',
-        'nav2_params.yaml'
+        'nav2_params.yaml' if not use_livo_localization else 'nav2_params_livo.yaml'
     )
 
     if conn_mode == 'single':
@@ -238,40 +243,82 @@ def generate_launch_description():
         arguments=['-d' + os.path.join(get_package_share_directory('go2_robot_sdk'), 'config', rviz_config), '--ros-args', '--log-level', 'warn'],
     )
     
-    localization_node = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'localization_launch.py')),
-        condition=IfCondition(PythonExpression(['not ', with_slam])),
-        launch_arguments={
-            'map': map_yaml_file,
-            'params_file': nav2_config,
-            'use_sim_time': use_sim_time,
-        }.items()
-    )
+    if use_livo_localization:
+        # only launch map server. The localization part (map->odom transformation) is conducted by LIVO.
+        map_server_node = RegisterEventHandler(
+            event_handler=OnProcessStart(
+                target_action=rviz_node,
+                on_start=[TimerAction(
+                    period=5.0,
+                    actions=[Node(
+                        package='nav2_map_server',
+                        executable='map_server',
+                        name='map_server',
+                        output='screen',
+                        arguments=['--ros-args', '--log-level', 'INFO'],
+                        parameters=[{
+                            'yaml_filename': map_yaml_file,
+                            'use_sim_time': use_sim_time,
+                            'topic_name': 'occu_map',
+                        }],
+                    )]
+                )]
+            )
+        )
+
+        map_server_activation = RegisterEventHandler(
+            event_handler=OnProcessStart(
+                target_action=rviz_node,
+                on_start=[TimerAction(
+                    period=6.0,
+                    actions=[Node(
+                        package='nav2_util',
+                        executable='lifecycle_bringup',
+                        name='map_server',
+                        output='screen',
+                        arguments=['map_server'],
+                    )]
+                )]
+            )
+        )
+    
+
+        localization_node = [map_server_node, map_server_activation]
+    else:        
+         # Map server should be launched after rviz process, otherwise rviz2 cannot receive the map topic as expected.
+        # See https://get-help.theconstruct.ai/t/rviz-map-not-received-unit-2-ros2-navigation/30932/4 for detail.
+        localization_node =  [RegisterEventHandler(
+            event_handler=OnProcessStart(
+                target_action=rviz_node,
+                on_start=[TimerAction(
+                    period=10.0,
+                    actions=[IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'localization_launch.py')),
+                        condition=IfCondition(PythonExpression(['not ', with_slam])),
+                        launch_arguments={
+                            'map': map_yaml_file,
+                            'params_file': nav2_config,
+                            'use_sim_time': use_sim_time,
+                        }.items()
+                    )]
+                )]
+            )
+        )]
     
     return LaunchDescription([
         *launch_args,
         *urdf_launch_nodes,
         rviz_node,
+        *localization_node,
         Node(
             package='go2_robot_sdk',
             executable='go2_driver_node',
-            parameters=[{'robot_ip': robot_ip, 'token': robot_token, "conn_type": conn_type}],
+            parameters=[{'robot_ip': robot_ip, 'token': robot_token, "conn_type": conn_type, "use_livox_localization": use_livo_localization}],
         ),
         Node(
             package='go2_robot_sdk',
             executable='lidar_to_pointcloud',
             parameters=[{'robot_ip_lst': robot_ip_lst, 'map_name': map_name, 'map_save': save_map}],
-        ),
-        # Map server should be launched after rviz process, otherwise rviz2 cannot receive the map topic as expected.
-        # See https://get-help.theconstruct.ai/t/rviz-map-not-received-unit-2-ros2-navigation/30932/4 for detail.
-        RegisterEventHandler(
-            event_handler=OnProcessStart(
-                target_action=rviz_node,
-                on_start=[TimerAction(
-                    period=10.0,
-                    actions=[localization_node]
-                )]
-            )
         ),
         Node(
             package='joy',
@@ -324,5 +371,6 @@ def generate_launch_description():
                 'params_file': nav2_config,
                 'use_sim_time': use_sim_time,
             }.items(),
+            
         ),
     ])

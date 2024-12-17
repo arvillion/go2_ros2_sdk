@@ -243,8 +243,6 @@ class Go2Connection():
 
     def on_data_channel_message(self, msg):
 
-        logger.debug("Received message: %s", msg)
-
         if self.data_channel.readyState != "open":
             self.data_channel._setReadyState("open")
 
