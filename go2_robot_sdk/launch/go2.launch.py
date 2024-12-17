@@ -313,7 +313,7 @@ def generate_launch_description():
         Node(
             package='go2_robot_sdk',
             executable='go2_driver_node',
-            parameters=[{'robot_ip': robot_ip, 'token': robot_token, "conn_type": conn_type, "use_livox_localization": use_livo_localization}],
+            parameters=[{'robot_ip': robot_ip, 'token': robot_token, "conn_type": conn_type, "use_livox_localization": use_livo_localization or "False"}],
         ),
         Node(
             package='go2_robot_sdk',

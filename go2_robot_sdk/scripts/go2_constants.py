@@ -97,9 +97,6 @@ RTC_TOPIC = {
     "ARM_FEEDBACK": "rt/arm_Feedback",
     "AUDIO_HUB_REQ": "rt/api/audiohub/request",
     "AUDIO_HUB_PLAY_STATE": "rt/audiohub/player/state",
-
-    "LIVOX_LIDAR": "rt/livox/lidar",
-    "LIVOX_IMU": "rt/livox/imu",
 }
 
 DATA_CHANNEL_TYPE = {
