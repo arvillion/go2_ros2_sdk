@@ -133,8 +133,12 @@ def generate_launch_description():
     )
 
     if conn_mode == 'single':
-
-        urdf_file_name = 'go2_with_livox.urdf'
+        
+        if use_livo_localization:
+            urdf_file_name = 'go2_with_livox.urdf'
+        else:
+            urdf_file_name = 'go2.urdf'
+            
         urdf = os.path.join(
             get_package_share_directory('go2_robot_sdk'),
             "urdf",
@@ -164,42 +168,12 @@ def generate_launch_description():
                 ],
                 parameters=[{
                     'target_frame': 'base_link',
-                    'max_height': 0.5
+                    'max_height': 0.5,
+                    'min_height': 0.2,
                 }],
                 output='screen',
             ),
         )
-        # urdf_launch_nodes.append(
-        #     Node(
-        #         package='pointcloud_to_laserscan',
-        #         executable='pointcloud_to_laserscan_node',
-        #         name='pointcloud_to_laserscan',
-        #         remappings=[
-        #             ('cloud_in', 'point_cloud2'),
-        #             #  ('cloud_in', 'livox/lidar'),
-        #             ('scan', 'scan'),
-        #         ],
-        #         parameters=[{
-        #             'target_frame': 'base_link',
-        #             'max_height': 0.1,
-        #             'min_height': -0.2,
-        #         }],
-        #         output='screen',
-        #     ),
-        # ),
-    
-        # urdf_launch_nodes.append(
-        #     Node(
-        #         package='go2_robot_sdk',
-        #         executable='sync_scan_time_node',
-        #         name='sync_scan_time',
-        #         parameters=[{
-        #             'input_topic': '/scan',
-        #             'output_topic': '/scan_synced',
-        #         }],
-        #         output='screen',
-        #     ),
-        # )
 
     else:
 
@@ -243,67 +217,24 @@ def generate_launch_description():
         arguments=['-d' + os.path.join(get_package_share_directory('go2_robot_sdk'), 'config', rviz_config), '--ros-args', '--log-level', 'warn'],
     )
     
-    if use_livo_localization:
-        # only launch map server. The localization part (map->odom transformation) is conducted by LIVO.
-        map_server_node = RegisterEventHandler(
-            event_handler=OnProcessStart(
-                target_action=rviz_node,
-                on_start=[TimerAction(
-                    period=5.0,
-                    actions=[Node(
-                        package='nav2_map_server',
-                        executable='map_server',
-                        name='map_server',
-                        output='screen',
-                        arguments=['--ros-args', '--log-level', 'INFO'],
-                        parameters=[{
-                            'yaml_filename': map_yaml_file,
-                            'use_sim_time': use_sim_time,
-                            'topic_name': 'occu_map',
-                        }],
-                    )]
-                )]
-            )
-        )
 
-        map_server_activation = RegisterEventHandler(
-            event_handler=OnProcessStart(
-                target_action=rviz_node,
-                on_start=[TimerAction(
-                    period=6.0,
-                    actions=[Node(
-                        package='nav2_util',
-                        executable='lifecycle_bringup',
-                        name='map_server',
-                        output='screen',
-                        arguments=['map_server'],
-                    )]
+    localization_node =  [RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=rviz_node,
+            on_start=[TimerAction(
+                period=10.0,
+                actions=[IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('go2_robot_sdk'), 'launch', 'localization_launch.py')),
+                    condition=IfCondition(PythonExpression(['not ', with_slam])),
+                    launch_arguments={
+                        'map': map_yaml_file,
+                        'params_file': nav2_config,
+                        'use_sim_time': use_sim_time,
+                    }.items()
                 )]
-            )
+            )]
         )
-    
-
-        localization_node = [map_server_node, map_server_activation]
-    else:        
-         # Map server should be launched after rviz process, otherwise rviz2 cannot receive the map topic as expected.
-        # See https://get-help.theconstruct.ai/t/rviz-map-not-received-unit-2-ros2-navigation/30932/4 for detail.
-        localization_node =  [RegisterEventHandler(
-            event_handler=OnProcessStart(
-                target_action=rviz_node,
-                on_start=[TimerAction(
-                    period=10.0,
-                    actions=[IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'localization_launch.py')),
-                        condition=IfCondition(PythonExpression(['not ', with_slam])),
-                        launch_arguments={
-                            'map': map_yaml_file,
-                            'params_file': nav2_config,
-                            'use_sim_time': use_sim_time,
-                        }.items()
-                    )]
-                )]
-            )
-        )]
+    )]
     
     return LaunchDescription([
         *launch_args,
@@ -314,11 +245,6 @@ def generate_launch_description():
             package='go2_robot_sdk',
             executable='go2_driver_node',
             parameters=[{'robot_ip': robot_ip, 'token': robot_token, "conn_type": conn_type, "use_livox_localization": use_livo_localization or "False"}],
-        ),
-        Node(
-            package='go2_robot_sdk',
-            executable='lidar_to_pointcloud',
-            parameters=[{'robot_ip_lst': robot_ip_lst, 'map_name': map_name, 'map_save': save_map}],
         ),
         Node(
             package='joy',

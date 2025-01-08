@@ -52,6 +52,17 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, CameraInfo
+from transforms3d import euler
+from unitree_api.msg import Request
+
+from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
+from unitree_sdk2py.idl.default import unitree_go_msg_dds__SportModeState_
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+from unitree_sdk2py.go2.sport.sport_client import (
+    SportClient,
+    PathPoint,
+    SPORT_PATH_POINT_SIZE,
+)
 
 
 logging.basicConfig(level=logging.WARN)
@@ -80,7 +91,8 @@ class RobotBaseNode(Node):
         self.conn_type = self.get_parameter(
             'conn_type').get_parameter_value().string_value
         self.use_livox_localization = self.get_parameter(
-            'use_livox_localization').get_parameter_value().bool_value
+            'use_livox_localization').get_parameter_value().string_value in ['True', 'true']
+
 
         self.conn_mode = "single" if len(self.robot_ip_lst) == 1 else "multi"
 
@@ -171,6 +183,11 @@ class RobotBaseNode(Node):
                 self.publish_joint_state_cyclonedds,
                 qos_profile)
             
+            ChannelFactoryInitialize(0, "enx000ec63d6d82")
+            self.sport_client = SportClient()  
+            self.sport_client.SetTimeout(10.0)
+            self.sport_client.Init()
+            
             if not self.use_livox_localization:
                 self.create_subscription(
                     PoseStamped,
@@ -178,11 +195,7 @@ class RobotBaseNode(Node):
                     self.publish_body_poss_cyclonedds,
                     qos_profile)
             else:
-                self.create_subscription(
-                    Odometry,
-                    '/localization',
-                    self.publish_body_poss_cyclonedds_livox,
-                    qos_profile)
+                self.get_logger().info("Using Livox localization")
 
             self.create_subscription(
                 PointCloud2,
@@ -210,10 +223,14 @@ class RobotBaseNode(Node):
         z = msg.angular.z
 
         # Allow omni-directional movement
-        if x != 0.0 or y != 0.0 or z != 0.0:
+        if self.conn_type == 'webrtc':
+            if x != 0.0 or y != 0.0 or z != 0.0:
+                self.robot_cmd_vel[robot_num] = gen_mov_command(
+                    round(x, 2), round(y, 2), round(z, 2))
+        else:
             self.robot_cmd_vel[robot_num] = gen_mov_command(
-                round(x, 2), round(y, 2), round(z, 2))
-
+                    round(x, 2), round(y, 2), round(z, 2))
+                
 
     def joy_cb(self, msg):
         self.joy_state = msg
@@ -223,20 +240,6 @@ class RobotBaseNode(Node):
         odom_trans.header.stamp = self.get_clock().now().to_msg()
         odom_trans.header.frame_id = 'odom'
         odom_trans.child_frame_id = f"base_link"
-        odom_trans.transform.translation.x = msg.pose.position.x
-        odom_trans.transform.translation.y = msg.pose.position.y
-        odom_trans.transform.translation.z = msg.pose.position.z + 0.07
-        odom_trans.transform.rotation.x = msg.pose.orientation.x
-        odom_trans.transform.rotation.y = msg.pose.orientation.y
-        odom_trans.transform.rotation.z = msg.pose.orientation.z
-        odom_trans.transform.rotation.w = msg.pose.orientation.w
-        self.broadcaster.sendTransform(odom_trans)
-
-    def publish_body_poss_cyclonedds_livox(self, msg):
-        odom_trans = TransformStamped()
-        odom_trans.header.stamp = self.get_clock().now().to_msg()
-        odom_trans.header.frame_id = 'camera_init'
-        odom_trans.child_frame_id = f"body"
         odom_trans.transform.translation.x = msg.pose.position.x
         odom_trans.transform.translation.y = msg.pose.position.y
         odom_trans.transform.translation.z = msg.pose.position.z + 0.07
@@ -288,6 +291,19 @@ class RobotBaseNode(Node):
                 self.conn[robot_num].data_channel.send(stand_up_cmd)
                 move_cmd = gen_command(ROBOT_CMD['BalanceStand'])
                 self.conn[robot_num].data_channel.send(move_cmd)
+        else:
+            if robot_num in self.conn and robot_num in self.robot_cmd_vel and self.robot_cmd_vel[robot_num] != None:
+                self.get_logger().info("Move")
+                
+                req_params = json.loads(self.robot_cmd_vel[robot_num])['data']['parameter']
+                req_params = json.loads(req_params)
+                x, y, z = req_params['x'], req_params['y'], req_params['z']
+                if x == 0 and y == 0 and z == 0:
+                    self.sport_client.StopMove()
+                else:
+                    self.sport_client.Move(x, y, z)
+                self.robot_cmd_vel[robot_num] = None
+
 
     def on_validated(self, robot_num):
         if robot_num in self.conn:
